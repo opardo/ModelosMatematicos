@@ -39,10 +39,7 @@ fprintf(' Number of samples     ..........  %3i  \n', n_row);
 fprintf(' Number of atributes   ..........  %3i  \n', n_atr);
 
 % Le aplicamos puntos interiores con sigma dinámico
-[ x, lambda, s ] = ipm_method ( A, b, gamma, TOL, 2 );
-
-% Le aplicamos puntos interiores con sigma estático
-[ x, lambda, s ] = ipm_method ( A, b, gamma, TOL, 1 );
+[ x, lambda, s ] = ipm_method ( A, b, gamma, TOL );
 
 %
 %--------------------------------------------------------------------------
@@ -148,7 +145,7 @@ train = train(1:ntrain,:);
 
 %--------------------------------------------------------------------------
 %
-function [ x, lambda, s ] = ipm_method ( A, b, gamma, TOL, orden );
+function [ x, lambda, s ] = ipm_method ( A, b, gamma, TOL );
 %
 %
 % ... una método de puntos interiores que usa el método de Mehrotra
@@ -165,20 +162,15 @@ e = ones(m,1);
 x = (gamma/2)*e; 
 s = x;
 y = A*x;
-X = diag(x);
-X_1 = diag(1./x);
-S = diag(s);
-S_1 = diag(1./s);
+X = diag(x); X = sparse(X);
+X_1 = diag(1./x); X_1 = sparse(X_1);
+S = diag(s); S = sparse(S);
+S_1 = diag(1./s); S_1 = sparse(S_1);
 lambda = 1;
 
-mu = (2*x'*s)/m;
-z = mu*(1./x);
-Z = diag(z);
-w = mu*(1./s);
-W = diag(w);
-
+mu = (x'*s)/m;
 F = zeros(n+m+1);
-tau = 0.9995d0; sigma = 0.2;
+tau = 0.995d0;
 
 % Definimos las condiciones de F
 
@@ -207,7 +199,7 @@ while d_gap > TOL & iter < 20
            
     KKT = [   zeros(m,m)     A'         -b      ;
                    A      -eye(n)     zeros(n,1);  
-                  -b'     zeros(1,n)     0     ];
+                  -b'     zeros(1,n)    0.0    ];
               
     cond(KKT)
               
@@ -221,25 +213,25 @@ while d_gap > TOL & iter < 20
     dlambda = dt(m+n+1);
     
     ds = -F4-dx;
-    dz = -X_1*(F5+Z*dx);
-    dw = -S_1*(F6+W*ds);
+        
+    alpha_x = step_d ( x, dx, 1 );
+    alpha_s = step_d ( s, ds, 1 );
+    alpha = min(alpha_x, alpha_s);
     
-    alpha_x = step_d ( x, dx, 1 )
-    alpha_y = step_d ( y, dy, 1 )
-    alpha_lambda = step_d ( lambda, dlambda, 1 )
-    alpha_s = step_d ( s, ds, 1 )
-    alpha_z = step_d ( z, dz, 1 )
-    alpha_w = step_d ( w, dw, 1 )
-    %
+        %
     % ... calculamos el parámetro de centrado sigma
     %
     
-    if (orden==2)
-        mu_aff = ((x + alpha_x*dx)'*(z + alpha_z*dz)+...
-        (s + alpha_s*ds)'*(w + alpha_w*dw)) / m;
-        sigma  = (mu_aff/mu)^3;
-    end
+    mu_aff = ((x + alpha_x*dx)'*(s + alpha_s*ds)) / m;
+    sigma  = (mu_aff/mu)^3;
+    
     %
+    z = mu*sigma*X_1*e;
+    w = mu*sigma*S_1*e;
+    Z = diag(z); Z = sparse(Z);
+    W = diag(w); W = sparse(W);
+    
+    
     F1 = -e-sigma*z-lambda*b+A'*y+sigma*w;
     F2 = b'*x;
     F3 = A*x-y;
@@ -274,36 +266,26 @@ while d_gap > TOL & iter < 20
     dw = -S_1*(F6+W*ds);
     
     alpha_x = step_d ( x, dx, tau );
-    alpha_y = step_d ( y, dy, tau );
-    alpha_lambda = step_d ( lambda, dlambda, tau );
     alpha_s = step_d ( s, ds, tau );
-    alpha_z = step_d ( z, dz, tau );
-    alpha_w = step_d ( w, dw, tau );
-        
+    alpha = min(alpha_x, alpha_s);
+    
     %
     % ... movemos las variables según el porcentaje calculado
     %
-    x = x + alpha_x*dx;  
-    y = y + alpha_y*dy;
-    lambda = lambda + alpha_lambda*dlambda;
-    s = s + alpha_s*ds;
-    length(z)
-    length(alpha_z)
-    length(dz)
-    z = z + alpha_z*dz;
-    w = w + alpha_w*dw;
+    x = x + alpha*dx;  
+    y = y + alpha*dy;
+    lambda = lambda + alpha*dlambda;
+    s = s + alpha*ds;
     
     %
     % ... recalculamos los valores
     %
-    X = diag(x);
-    X_1 = diag(1./x);
-    S = diag(s);
-    S_1 = diag(1./s);
+    X = diag(x); X = sparse(X);
+    X_1 = diag(1./x); X_1 = sparse(X_1);
+    S = diag(s); S = sparse(S);
+    S_1 = diag(1./s); S_1 = sparse(S_1);
     
-    mu = (x'*z+s'*w)/m;
-    Z = diag(z);
-    W = diag(w);       
+    mu = (x'*z+s'*w)/m;       
     d_gap  = mu;
     
     % Redefinimos las condiciones de F
@@ -319,6 +301,8 @@ while d_gap > TOL & iter < 20
 end
 
 fprintf('%3i  %8.2e  %14.8e \n', iter, d_gap, OBJ ); 
+
+x
 %
 %--------------------------------------------------------------------------
 %

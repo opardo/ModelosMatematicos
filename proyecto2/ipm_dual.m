@@ -171,29 +171,29 @@ S = diag(s);
 S_1 = diag(1./s);
 lambda = 1;
 
-mu = (2*x'*s)/m;
-z = mu*(1./x);
+z = x;
 Z = diag(z);
-w = mu*(1./s);
+w = x;
 W = diag(w);
+mu = x'*z+s'*w;
 
 F = zeros(n+m+1);
-tau = 0.9995d0; sigma = 0.2;
+tau = 0.995d0; sigma = 0.2;
 
 % Definimos las condiciones de F
 
-F1 = -e-lambda*b+A'*y;
+F1 = -e-sigma*z-lambda*b+A'*y+sigma*w;
 F2 = b'*x;
 F3 = A*x-y;
 F4 = x-gamma*e+s;
-F5 = zeros(m,1);
-F6 = zeros(m,1);
+F5 = sigma*(X*z-mu*e);
+F6 = sigma*(S*w-mu*e);
+    
+F = -[ F1+X_1*F5-S_1*F6+S_1*W*F4; F3; -F2 ];  F_norm = norm(F); iter=0;
 
 % Definimos la función objetivo y la brecha inicial
 OBJ =  (0.5)*y'*y-e'*x;
 d_gap = mu;
-
-F   = -[ F1; F3; -F2 ];  F_norm = norm(F);   iter = 0;
 
 fprintf('\n');
 fprintf('iter   d_gap         OBJ      \n');
@@ -203,14 +203,12 @@ fprintf('------------------------------------\n');
 % sea menor que la tolerancia y limitamos el método a 20 iteraciones
 while d_gap > TOL & iter < 20
     
-    iter = iter + 1;    
-           
-    KKT = [   zeros(m,m)     A'         -b      ;
+    iter = iter + 1;               
+    
+    KKT = [   X_1*Z+S_1*W    A'         -b      ;
                    A      -eye(n)     zeros(n,1);  
-                  -b'     zeros(1,n)     0     ];
-              
-    cond(KKT)
-              
+                  -b'     zeros(1,n)     0     ];              
+          
     KKT = sparse(KKT);
     [ LL, DD, PP, Sc, neg, ran ] = ldl(KKT);
    
@@ -224,55 +222,17 @@ while d_gap > TOL & iter < 20
     dz = -X_1*(F5+Z*dx);
     dw = -S_1*(F6+W*ds);
     
-    alpha_x = step_d ( x, dx, 1 )
-    alpha_y = step_d ( y, dy, 1 )
-    alpha_lambda = step_d ( lambda, dlambda, 1 )
-    alpha_s = step_d ( s, ds, 1 )
-    alpha_z = step_d ( z, dz, 1 )
-    alpha_w = step_d ( w, dw, 1 )
-    %
+        %
     % ... calculamos el parámetro de centrado sigma
     %
-    
-    if (orden==2)
-        mu_aff = ((x + alpha_x*dx)'*(z + alpha_z*dz)+...
-        (s + alpha_s*ds)'*(w + alpha_w*dw)) / m;
-        sigma  = (mu_aff/mu)^3;
-    end
-    %
-    F1 = -e-sigma*z-lambda*b+A'*y+sigma*w;
-    F2 = b'*x;
-    F3 = A*x-y;
-    F4 = x-gamma*e+s;
-    F5 = sigma*(X*z-mu*e);
-    F6 = sigma*(S*w-mu*e);
-    
-    F   = -[ F1+X_1*F5-S_1*F6+S_1*W*F4; F3; -F2 ];  F_norm = norm(F);
-    
-    KKT = [   X_1*Z+S_1*W    A'         -b      ;
-                   A      -eye(n)     zeros(n,1);  
-                  -b'     zeros(1,n)     0     ];              
-          
-    KKT = sparse(KKT);
-    [ LL, DD, PP, Sc, neg, ran ] = ldl(KKT);
     
     %
     % ... imprimimos los resultados de la iteración anterior
     %
     fprintf('%3i   %8.2e  %14.8e \n', iter-1, d_gap, OBJ );   
     
-    % Calculamos el paso corrector
-    
-    dt = backsolve( LL, DD, PP, Sc, F );
-    
-    dx =   dt(1:m);
-    dy =   dt(m+1:m+n);
-    dlambda = dt(m+n+1);
-    
-    ds = -F4-dx;
-    dz = -X_1*(F5+Z*dx);
-    dw = -S_1*(F6+W*ds);
-    
+    % Calculamos el paso corrector    
+  
     alpha_x = step_d ( x, dx, tau );
     alpha_y = step_d ( y, dy, tau );
     alpha_lambda = step_d ( lambda, dlambda, tau );
@@ -287,9 +247,6 @@ while d_gap > TOL & iter < 20
     y = y + alpha_y*dy;
     lambda = lambda + alpha_lambda*dlambda;
     s = s + alpha_s*ds;
-    length(z)
-    length(alpha_z)
-    length(dz)
     z = z + alpha_z*dz;
     w = w + alpha_w*dw;
     
@@ -307,14 +264,14 @@ while d_gap > TOL & iter < 20
     d_gap  = mu;
     
     % Redefinimos las condiciones de F
-    F1 = -e-lambda*b+A'*y;
+    F1 = -e-sigma*z-lambda*b+A'*y+sigma*w;
     F2 = b'*x;
     F3 = A*x-y;
     F4 = x-gamma*e+s;
-    F5 = zeros(m,1);
-    F6 = zeros(m,1);
+    F5 = sigma*(X*z-mu*e);
+    F6 = sigma*(S*w-mu*e);
 
-    F   = -[ F1; F3; -F2 ];  F_norm = norm(F);
+    F = -[ F1+X_1*F5-S_1*F6+S_1*W*F4; F3; -F2 ];  F_norm = norm(F);
 
 end
 
