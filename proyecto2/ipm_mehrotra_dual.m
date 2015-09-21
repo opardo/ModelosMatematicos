@@ -1,10 +1,13 @@
-function  ipm_mehrotra();
+function  ipm_mehrotra_dual();
 %--------------------------------------------------------------------------
 %... Una prueba del código de puntos interiores extendido a la resolución
-% de problemas de programación cuadrática 
+% de problemas de programación cuadrática, modificado del original del 
+% instructor del curso: 'JL Morales 2013, ITAM'
 %
-%                                       JL Morales 2013
-%                                       ITAM
+%                                           Omar Pardo 130013
+%                                           Modelos Matemáticos
+%                                                       2015
+%                                                       ITAM
 %--------------------------------------------------------------------------
 
 TOL = 1.0e-8;   % ... tolerancia para la brecha de dualidad promedio
@@ -15,25 +18,23 @@ TOL = 1.0e-8;   % ... tolerancia para la brecha de dualidad promedio
 % Obtenemos las dimensiones y quitamos el identificador
 [n_row, n_col] = size(T);
 n_atr = 30;
-X = T(1:n_row,2:n_atr+1);
+X = T(1:n_row, 2:n_atr+1);
 
 % Escalamos la matriz y la transponemos para dejarla en términos del modelo
 [ X ] = scale(X);
 X = X';
 
-y = X(1,:);
-Y = diag(y);
-X(1,:) = [];
+% Reetiquetamos los valores que tenían 0
+ind = T(:,1) ~= 1;
+T(ind,1) = -1;
 
-A = X*Y; b=y'; 
+% Definimos las matrices de acuerdo al modelo
+b = T(:,1);
+Y = diag(b);
 
-gamma = 1;
+A = X*Y; 
 
-%m = 0; k = 0;
-
-% Obtenemos el número de tumores total y el número de variables del módelo
-%mm = m + k;
-%nn = 2*n_atr + 2 + m + k + m + k;
+gamma = 1000;
 
 fprintf(' Number of samples     ..........  %3i  \n', n_row);
 fprintf(' Number of atributes   ..........  %3i  \n', n_atr);
@@ -41,8 +42,228 @@ fprintf(' Number of atributes   ..........  %3i  \n', n_atr);
 % Le aplicamos puntos interiores con sigma dinámico
 [ x, lambda, s ] = ipm_method ( A, b, gamma, TOL );
 
+
+function [ x, lambda, s ] = ipm_method ( A, b, gamma, TOL );
+%
 %
 %--------------------------------------------------------------------------
+
+% Definimos las dimensiones
+[n, m] = size(A);
+
+% Definimos el punto inicial para 'x', 's', 'y' y 'lambda'
+e = ones(m,1);
+x = (gamma/2)*e; 
+s = x;
+y = A*x;
+lambda = 1;
+
+% Calculamos matrices auxiliares
+X = diag(x); X = sparse(X);
+X_1 = diag(1./x); X_1 = sparse(X_1);
+S = diag(s); S = sparse(S);
+S_1 = diag(1./s); S_1 = sparse(S_1);
+
+% Definimos z y w iniciales
+z = x;
+w = x;
+
+% Calculamos matrices auxiliares
+Z = diag(z); Z = sparse(Z);
+W = diag(w); W = sparse(W);
+
+% Calculamos la brecha inicial
+mu = (x'*z+s'*w)/(2*m);
+
+% Iniciamos el vector de F's y definimos la tau
+F = zeros(n+m+1);
+tau = 0.9995d0;
+
+% Definimos las condiciones de F, sin tomar en cuenta mu
+
+F1 = -e-z-lambda*b+A'*y+w;
+F2 = b'*x;
+F3 = A*x-y;
+F4 = x-gamma*e+s;
+F5 = X*z;
+F6 = S*w;
+F1_bis = F1+X_1*F5-S_1*F6+S_1*W*F4;
+
+% Calculamos las normas de F
+F1_n = norm(F1);
+F2_n = norm(F2);
+F3_n = norm(F3);
+F4_n = norm(F4);
+F5_n = norm(F5);
+F6_n = norm(F6);
+
+% Definimos la función objetivo y la brecha inicial
+OBJ =  (0.5)*y'*y-e'*x;
+d_gap = mu;
+
+% Calculamos el vector inicial F
+F   = -[ F1_bis; F3; -F2 ]; F_n = norm(F); iter = 0;
+
+fprintf('\n');
+fprintf('iter   d_gap         OBJ         ||F1||   ||F2||  ||F3||   ||F4||  ||F5||   ||F6||    alpha   sigma\n');
+fprintf('------------------------------------\n');
+fprintf('%3i   %8.2e  %14.8e %8.2e %8.2e %8.2e %8.2e %8.2e %8.2e \n', ...
+        iter, d_gap, OBJ, F1_n, F2_n, F3_n, F4_n, F5_n, F6_n ); 
+
+% Establecemos como condición de paro que la brecha del dual y el primal
+% sea menor que la tolerancia y limitamos el método a 30 iteraciones
+while d_gap >  TOL & iter < 30 
+    
+    % Iniciamos el conteo de iteraciones
+    iter = iter + 1;    
+    
+    % Obtenemos la Jacobiana
+    KKT = [   X_1*Z + S_1*W         A'         -b     ;
+                   A            -eye(n)     zeros(n,1);  
+                  -b'           zeros(1,n)     0     ];              
+            
+    KKT = sparse(KKT);
+    
+    % Resolvemos el sistema
+    [ L, D, P, S ] = ldl(KKT);
+   
+    dt = backsolve( L, D, P, S, F );
+    
+    dx =   dt(1:m);
+    dy =   dt(m+1:m+n);
+    dlambda = dt(m+n+1);
+    ds = -F4-dx;
+    dz = -X_1*(F5+Z*dx);
+    dw = -S_1*(F6+W*ds);
+        
+    alpha_x = step_d ( x, dx, 1 );
+    alpha_s = step_d ( s, ds, 1 );
+    alpha_z = step_d ( z, dz, 1 );
+    alpha_w = step_d ( w, dw, 1 );
+  
+    % ... calculamos el parámetro de centrado sigma
+    %
+    
+    mu_aff = ((x + alpha_x*dx)'*(z + alpha_z*dz)+...
+              (s + alpha_s*ds)'*(w + alpha_w*dw))/ (2*m);
+    sigma  = (mu_aff/mu)^3;
+    
+    %
+    
+    F5 = F5+dx.*dz-sigma*mu*e;
+    F6 = F6+ds.*dw-sigma*mu*e;
+    F1_bis = F1+X_1*F5-S_1*F6+S_1*W*F4;
+    
+    F   = -[ F1_bis; F3; -F2 ];  
+    
+     
+    % Calculamos el paso corrector
+    
+    dt = backsolve( L, D, P, S, F );
+    
+    dx =   dt(1:m);
+    dy =   dt(m+1:m+n);
+    dlambda = dt(m+n+1);
+    
+    ds = -F4-dx;
+    dz = -X_1*(F5+Z*dx);
+    dw = -S_1*(F6+W*ds);
+    
+    alpha_x = step_d ( x, dx, tau );
+    alpha_s = step_d ( s, ds, tau );
+    alpha_z = step_d ( z, dz, tau );
+    alpha_w = step_d ( w, dw, tau );
+    alpha = min(alpha_x, alpha_s);
+       %
+    % ... movemos las variables según el porcentaje calculado
+    %
+    x = x + alpha_x*dx;  
+    y = y + alpha*dy;
+    lambda = lambda + alpha*dlambda;
+    s = s + alpha_s*ds;
+    z = z + alpha_z*dz;
+    w = w + alpha_w*dw;
+    
+    %
+    % ... recalculamos los valores
+    %
+    X = diag(x); X = sparse(X);
+    X_1 = diag(e./x); X_1 = sparse(X_1);
+    S = diag(s); S = sparse(S);
+    S_1 = diag(e./s); S_1 = sparse(S_1);
+    Z = diag(z); Z = sparse(Z);
+    W = diag(w); W = sparse(W);
+    
+    mu = (x'*z+s'*w)/(2*m);       
+    d_gap  = mu;
+    
+    % Redefinimos las condiciones de F
+    F1 = -e-z-lambda*b+A'*y+w;
+    F2 = b'*x;
+    F3 = A*x-y;
+    F4 = x-gamma*e+s;
+    F5 = X*z;
+    F6 = S*w;
+    F1_bis = F1+X_1*F5-S_1*F6+S_1*W*F4;
+
+    F   = -[ F1_bis; F3; -F2 ];  F_norm = norm(F);
+    
+    % Calculamos las normas de F
+    F1_n = norm(F1);
+    F2_n = norm(F2);
+    F3_n = norm(F3);
+    F4_n = norm(F4);
+    F5_n = norm(F5);
+    F6_n = norm(F6);
+
+    % Definimos la función objetivo 
+    OBJ =  (0.5)*y'*y-e'*x;
+    
+    % ... imprimimos los resultados de la iteración anterior
+    %
+    fprintf('%3i   %8.2e  %14.8e %8.2e %8.2e %8.2e %8.2e %8.2e %8.2e %8.2e %8.2e  \n', ...
+        iter, d_gap, OBJ, F1_n, F2_n, F3_n, F4_n, F5_n, F6_n, alpha, sigma );   
+
+end
+
+
+%
+%--------------------------------------------------------------------------
+%
+function alpha = step_d ( x, dx, tau );
+one = 1.0d0; zero = 0.0d0;
+
+ind = find( dx<zero );
+
+if isempty(ind) == 1
+    alpha = tau;
+else
+    alpha = min(-x(ind)./dx(ind));
+    alpha = tau*min (one, alpha);
+end
+%
+%--------------------------------------------------------------------------
+% ... estandarizar una matriz
+%
+function [ X ] = scale(X);
+[ m, n ] = size(X); e = ones(m,1);
+
+for i=1:n
+   xm = mean( X(:,i) );
+   xs = std( X(:,i) );
+   X(:,i) = (X(:,i) - xm*e)/xs;
+end
+
+
+function [ d ] = backsolve ( L, D, P, S, F );
+
+d = P'*(S*F);
+d = L\d;
+d = D\d;
+d = L'\d;
+d = S*P*d;
+
+
 %
 function [train,test,ntrain,ntest] = wdbcData(datafile,dataDim,fracTest,reord)
 % syntax: [train,test,ntrain,ntest] = wdbcData(datafile,dataDim,fracTest,reord)
@@ -145,193 +366,3 @@ train = train(1:ntrain,:);
 
 %--------------------------------------------------------------------------
 %
-function [ x, lambda, s ] = ipm_method ( A, b, gamma, TOL );
-%
-%
-% ... una método de puntos interiores que usa el método de Mehrotra
-%
-%     jl morales 
-%     ITAM
-%     2013
-%
-%--------------------------------------------------------------------------
-
-% Definimos los valores iniciales
-[n, m] = size(A); 
-e = ones(m,1);
-x = (gamma/2)*e; 
-s = x;
-y = A*x;
-X = diag(x); X = sparse(X);
-X_1 = diag(1./x); X_1 = sparse(X_1);
-S = diag(s); S = sparse(S);
-S_1 = diag(1./s); S_1 = sparse(S_1);
-lambda = 1;
-
-mu = (x'*s)/m;
-F = zeros(n+m+1);
-tau = 0.995d0;
-
-% Definimos las condiciones de F
-
-F1 = -e-lambda*b+A'*y;
-F2 = b'*x;
-F3 = A*x-y;
-F4 = x-gamma*e+s;
-F5 = zeros(m,1);
-F6 = zeros(m,1);
-
-% Definimos la función objetivo y la brecha inicial
-OBJ =  (0.5)*y'*y-e'*x;
-d_gap = mu;
-
-F   = -[ F1; F3; -F2 ];  F_norm = norm(F);   iter = 0;
-
-fprintf('\n');
-fprintf('iter   d_gap         OBJ      \n');
-fprintf('------------------------------------\n');
-
-% Establecemos como condición de paro que la brecha del dual y el primal
-% sea menor que la tolerancia y limitamos el método a 20 iteraciones
-while d_gap > TOL & iter < 20
-    
-    iter = iter + 1;    
-           
-    KKT = [   zeros(m,m)     A'         -b      ;
-                   A      -eye(n)     zeros(n,1);  
-                  -b'     zeros(1,n)    0.0    ];
-              
-    cond(KKT)
-              
-    KKT = sparse(KKT);
-    [ LL, DD, PP, Sc, neg, ran ] = ldl(KKT);
-   
-    dt = backsolve( LL, DD, PP, Sc, F );
-    
-    dx =   dt(1:m);
-    dy =   dt(m+1:m+n);
-    dlambda = dt(m+n+1);
-    
-    ds = -F4-dx;
-        
-    alpha_x = step_d ( x, dx, 1 );
-    alpha_s = step_d ( s, ds, 1 );
-    alpha = min(alpha_x, alpha_s);
-    
-        %
-    % ... calculamos el parámetro de centrado sigma
-    %
-    
-    mu_aff = ((x + alpha_x*dx)'*(s + alpha_s*ds)) / m;
-    sigma  = (mu_aff/mu)^3;
-    
-    %
-    z = mu*sigma*X_1*e;
-    w = mu*sigma*S_1*e;
-    Z = diag(z); Z = sparse(Z);
-    W = diag(w); W = sparse(W);
-    
-    
-    F1 = -e-sigma*z-lambda*b+A'*y+sigma*w;
-    F2 = b'*x;
-    F3 = A*x-y;
-    F4 = x-gamma*e+s;
-    F5 = sigma*(X*z-mu*e);
-    F6 = sigma*(S*w-mu*e);
-    
-    F   = -[ F1+X_1*F5-S_1*F6+S_1*W*F4; F3; -F2 ];  F_norm = norm(F);
-    
-    KKT = [   X_1*Z+S_1*W    A'         -b      ;
-                   A      -eye(n)     zeros(n,1);  
-                  -b'     zeros(1,n)     0     ];              
-          
-    KKT = sparse(KKT);
-    [ LL, DD, PP, Sc, neg, ran ] = ldl(KKT);
-    
-    %
-    % ... imprimimos los resultados de la iteración anterior
-    %
-    fprintf('%3i   %8.2e  %14.8e \n', iter-1, d_gap, OBJ );   
-    
-    % Calculamos el paso corrector
-    
-    dt = backsolve( LL, DD, PP, Sc, F );
-    
-    dx =   dt(1:m);
-    dy =   dt(m+1:m+n);
-    dlambda = dt(m+n+1);
-    
-    ds = -F4-dx;
-    dz = -X_1*(F5+Z*dx);
-    dw = -S_1*(F6+W*ds);
-    
-    alpha_x = step_d ( x, dx, tau );
-    alpha_s = step_d ( s, ds, tau );
-    alpha = min(alpha_x, alpha_s);
-    
-    %
-    % ... movemos las variables según el porcentaje calculado
-    %
-    x = x + alpha*dx;  
-    y = y + alpha*dy;
-    lambda = lambda + alpha*dlambda;
-    s = s + alpha*ds;
-    
-    %
-    % ... recalculamos los valores
-    %
-    X = diag(x); X = sparse(X);
-    X_1 = diag(1./x); X_1 = sparse(X_1);
-    S = diag(s); S = sparse(S);
-    S_1 = diag(1./s); S_1 = sparse(S_1);
-    
-    mu = (x'*z+s'*w)/m;       
-    d_gap  = mu;
-    
-    % Redefinimos las condiciones de F
-    F1 = -e-lambda*b+A'*y;
-    F2 = b'*x;
-    F3 = A*x-y;
-    F4 = x-gamma*e+s;
-    F5 = zeros(m,1);
-    F6 = zeros(m,1);
-
-    F   = -[ F1; F3; -F2 ];  F_norm = norm(F);
-
-end
-
-fprintf('%3i  %8.2e  %14.8e \n', iter, d_gap, OBJ ); 
-
-x
-%
-%--------------------------------------------------------------------------
-%
-function alpha = step_d ( x, dx, tau );
-one = 1.0d0; zero = 0.0d0;
-n = length(x);
-
-ind = find( dx<0 );
-alpha = min(-x(ind)./dx(ind));
-alpha = tau*min (one, alpha);
-%
-%--------------------------------------------------------------------------
-% ... estandarizar una matriz
-%
-function [ X ] = scale(X);
-[ m, n ] = size(X); e = ones(m,1);
-
-for i=1:n
-   xm = mean( X(:,i) );
-   xs = std( X(:,i) );
-   X(:,i) = (X(:,i) - xm*e)/xs;
-end
-
-
-function [ d ] = backsolve ( L, D, P, S, F );
-
-d = P'*(S*F);
-d = L\d;
-d = D\d;
-d = L'\d;
-d = P'\d;
-d = S*d;
